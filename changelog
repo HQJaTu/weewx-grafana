@@ -1,0 +1,15 @@
+0.1.0
+* initial implementation
+* StdRESTful service (user.grafana.GrafanaCloud) publishes archive/loop
+  records to Grafana Cloud over OTLP/HTTP (JSON encoding), with station,
+  model, and unit_system published as static resource attributes and
+  observations named per the weewx_<observation>_<unit> convention (e.g.
+  outTemp in Celsius becomes weewx_outdoor_temperature_celsius)
+  Basic auth (instance_id/api_key), configurable unit_system conversion,
+  binding (loop/archive), skip_fields, and per-observation name/unit
+  overrides via [[[inputs]]] (as in weewx-mqtt)
+* bin/user/grafana_backfill.py: standalone CLI that extracts historical
+  archive data up to a given point in time and writes it in OpenMetrics
+  format, using the same naming/labels as the live uploader, ready for
+  'promtool tsdb create-blocks-from openmetrics' + 'mimirtool backfill'
+* bin/user/grafana_metrics.py: naming/unit/payload logic shared by both
