@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION=$(grep -Po '(?<=VERSION = ")[^"]+' install.py)
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Stage distributable files
+        run: |
+          STAGE="weewx-grafana-${{ steps.version.outputs.version }}"
+          mkdir -p "$STAGE/bin/user"
+          cp install.py changelog LICENSE README.md "$STAGE/"
+          cp bin/user/grafana.py bin/user/grafana_metrics.py bin/user/grafana_backfill.py "$STAGE/bin/user/"
+          zip -r "$STAGE.zip" "$STAGE"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weewx-grafana-${{ steps.version.outputs.version }}
+          path: weewx-grafana-${{ steps.version.outputs.version }}.zip
+
+      - name: Attach zip to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: weewx-grafana-${{ steps.version.outputs.version }}.zip
