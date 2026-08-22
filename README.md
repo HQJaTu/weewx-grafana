@@ -210,13 +210,13 @@ unchanged can never succeed). In practice this means **direct push is only
 useful for recent gaps** -- a few days to catch the live uploader up, say.
 For a real backfill of months or years of history, expect every batch to be
 rejected once it reaches data older than the window, and use the
-OpenMetrics/promtool/mimirtool flow below instead: it uploads TSDB blocks
+OpenMetrics/TSDB-block-upload flow below instead: it uploads TSDB blocks
 directly to storage, bypassing the ingester's ordering rules entirely, so
 it has no such age limit. If you're not sure which applies to you, push a
 small `--since`/`--until` range first and confirm it lands in Grafana Cloud;
 if you want direct push to reach further back, ask Grafana support whether
 your stack's out-of-order window can be widened, but for large/old
-backfills the promtool/mimirtool flow is the recommended approach.
+backfills the block-upload flow is the recommended approach.
 
 Pass `--dry-run` to skip pushing to Grafana Cloud entirely (combine with
 `--output-file`, below, to only produce a file). A batch that fails with a
@@ -229,29 +229,48 @@ immediately with the error Grafana Cloud returned.
 
 Pass `--output-file <path>` to also (or with `--dry-run`, instead) write the
 data out as an [OpenMetrics](https://github.com/OpenMetrics/OpenMetrics)
-text file -- useful for archival, or for feeding the older
-[promtool](https://prometheus.io/docs/prometheus/latest/command-line/promtool/)/
-[mimirtool](https://grafana.com/docs/mimir/latest/manage/tools/mimirtool/)
-TSDB-block-upload flow instead of pushing directly:
+text file -- useful for archival, or as the input to a TSDB-block-upload flow
+for the data that's too old for direct push:
 
 ```
 PYTHONPATH=/usr/share/weewx python3 bin/user/grafana_backfill.py \
     --weewx-config /etc/weewx/weewx.conf \
     --until "2026-01-01 00:00:00" \
     --dry-run --output-file weewx_backfill.prom
+```
 
+That file then needs turning into TSDB blocks before
+[mimirtool](https://grafana.com/docs/mimir/latest/manage/tools/mimirtool/)
+can upload it. Two tools can do that step:
+
+**`tools/tsdb-block-writer`** (recommended) -- a small Go helper in this repo
+that writes blocks directly via Prometheus's own block-writing library,
+without going through promtool's CLI. On a real multi-year archive this took
+about a minute where `promtool` took well over one hundred; see
+[`tools/tsdb-block-writer/README.md`](tools/tsdb-block-writer/README.md) for
+build instructions, validation results, and why it's a separate Go binary
+rather than part of the Python extension.
+
+```
+cd tools/tsdb-block-writer && go build -o tsdb-block-writer .
+./tsdb-block-writer -input weewx_backfill.prom -output ./blocks -block-duration 168h
+mimirtool backfill --address=<mimir-url> --id=<tenant-id> ./blocks/*
+```
+
+**[`promtool`](https://prometheus.io/docs/prometheus/latest/command-line/promtool/)**
+(fallback) -- no Go toolchain needed, just slower:
+
+```
 promtool tsdb create-blocks-from openmetrics --max-block-duration=24h weewx_backfill.prom ./blocks
 mimirtool backfill --address=<mimir-url> --id=<tenant-id> ./blocks/*
 ```
 
-`<mimir-url>` and `<tenant-id>` (your Grafana Cloud instance ID) are shown
-alongside the OTLP endpoint on the same stack details page; mimirtool
-authenticates with `--id` (the tenant) and `instance_id:api_key` as HTTP
-Basic Auth, the same `api_key` configured above. See mimirtool's `backfill`
-documentation for the exact authentication flags for your version. Building
-TSDB blocks for a large history is far slower than pushing directly over
-Remote Write (easily well over an hour, versus minutes), which is why the
-direct push above is the tool's default behavior.
+Either way, `<mimir-url>` and `<tenant-id>` (your Grafana Cloud instance ID)
+are shown alongside the OTLP endpoint on the same stack details page;
+mimirtool authenticates with `--id` (the tenant) and `instance_id:api_key` as
+HTTP Basic Auth, the same `api_key` configured above. See mimirtool's
+`backfill` documentation for the exact authentication flags for your
+version.
 
 #### Links
 * `promtool`: https://prometheus.io/download/

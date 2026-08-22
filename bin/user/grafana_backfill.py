@@ -12,8 +12,9 @@ live series are the same series in Grafana Cloud. This tool's live counterpart
 standalone backfill tool speaks Remote Write.
 
 Pass --output-file to additionally (or, with --dry-run, instead) write the
-data out as an OpenMetrics text file, e.g. for archival or for the older
-promtool/mimirtool block-upload flow.
+data out as an OpenMetrics text file, e.g. for archival or as input to a
+TSDB-block-upload flow (tools/tsdb-block-writer, or the older promtool/
+mimirtool flow) for history too old for direct push.
 
 Usage:
 
@@ -213,9 +214,11 @@ def push_write_request(write_request, prometheus_url, auth_header,
                         "so a direct push can never deliver them, no matter how many "
                         "times it's retried. For historical data this old, use "
                         "--dry-run --output-file to produce an OpenMetrics file "
-                        "instead, and the promtool/mimirtool block-upload flow "
-                        "(see this tool's README, 'Getting an OpenMetrics file "
-                        "instead'). Original error: %s" % (e.code, detail))
+                        "instead, then turn it into TSDB blocks with "
+                        "tools/tsdb-block-writer (recommended) or promtool, and "
+                        "upload with mimirtool backfill (see this tool's README, "
+                        "'Getting an OpenMetrics file instead'). "
+                        "Original error: %s" % (e.code, detail))
                 raise RuntimeError(
                     "Grafana Cloud rejected the batch (HTTP %d): %s" % (e.code, detail))
             log.warning("push attempt %d/%d failed (HTTP %d): %s",
@@ -247,9 +250,10 @@ def create_parser():
                               "(the backfill's cutoff point). Same format as --since.")
     parser.add_argument('--output-file', default=None,
                          help="Also write the data out as an OpenMetrics text file at "
-                              "this path (e.g. for archival, or the older "
-                              "promtool/mimirtool block-upload flow). Independent of "
-                              "pushing: combine with --dry-run to only write the file.")
+                              "this path (e.g. for archival, or as input to a "
+                              "TSDB-block-upload flow: tools/tsdb-block-writer or "
+                              "promtool/mimirtool). Independent of pushing: combine "
+                              "with --dry-run to only write the file.")
     parser.add_argument('--dry-run', action='store_true',
                          help="Build and validate every batch (the same encoding work "
                               "a real push does) but don't actually push to Grafana "
