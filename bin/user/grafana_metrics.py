@@ -16,6 +16,13 @@ metric name, since they identify the *source*, not the *measurement*.
 
 import re
 
+import cramjam
+
+try:
+    from user import remote_write_pb2
+except ImportError:
+    import remote_write_pb2
+
 import weewx.units
 
 VERSION = "0.1.0"
@@ -183,6 +190,22 @@ def metric_name_for(obs_key, unit_type, name_override=None):
     return "weewx_%s" % base
 
 
+def coerce_config_string(value):
+    """Rejoin a configobj value that was parsed as a list back into a single
+    string.
+
+    configobj splits an unquoted comma-containing config value (e.g.
+    'station = Ojala, Lappeenranta') into a list rather than keeping it as
+    one string. Left alone, that list silently corrupts the published label
+    (a Python list repr in OTLP JSON) or crashes outright building Remote
+    Write series (a list isn't hashable). Rejoining with ', ' restores what
+    the user's config plainly intended.
+    """
+    if isinstance(value, list):
+        return ', '.join(value)
+    return value
+
+
 def unit_system_name(usUnits):
     """Return the configured nickname (US, METRIC, METRICWX) for a weewx
     standard unit system constant, falling back to its raw value."""
@@ -334,3 +357,43 @@ def write_openmetrics(fileobj, families):
             fileobj.write('%s%s %s %d\n' % (
                 name, format_label_set(labels), repr(float(value)), int(timestamp)))
     fileobj.write('# EOF\n')
+
+
+def build_write_request(families):
+    """Build a Prometheus Remote Write WriteRequest from the same
+    metric_name -> family mapping write_openmetrics() consumes.
+
+    One TimeSeries is emitted per unique (metric name, label set) pair, with
+    its samples sorted by increasing timestamp -- Remote Write requires each
+    series' samples to arrive in non-decreasing timestamp order, both within
+    one WriteRequest and across successive ones for the same series.
+    """
+    series = {}
+    for name, family in families.items():
+        for labels, timestamp, value in family['samples']:
+            key = (name, tuple(sorted(labels.items())))
+            series.setdefault(key, []).append((int(timestamp), float(value)))
+
+    write_request = remote_write_pb2.WriteRequest()
+    for (name, label_items), samples in series.items():
+        timeseries = write_request.timeseries.add()
+        timeseries.labels.add(name='__name__', value=name)
+        for label_name, label_value in label_items:
+            timeseries.labels.add(name=label_name, value=str(label_value))
+        for timestamp, value in sorted(samples):
+            sample = timeseries.samples.add()
+            sample.timestamp = timestamp * 1000  # Remote Write uses milliseconds
+            sample.value = value
+    return write_request
+
+
+def compress_snappy(data):
+    """Snappy-compress a byte string, as required by the Remote Write wire
+    format ('Content-Encoding: snappy').
+
+    Remote Write requires the raw block format (matching Go's
+    snappy.Encode/Decode), not cramjam's default framed/streaming format --
+    using the latter produces a payload Grafana Cloud rejects with
+    'snappy: corrupt input'.
+    """
+    return bytes(cramjam.snappy.compress_raw(data))

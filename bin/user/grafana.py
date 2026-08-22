@@ -128,6 +128,8 @@ class GrafanaCloud(weewx.restx.StdRESTful):
         stn = getattr(self.engine, 'stn_info', None)
         site_dict.setdefault('station', getattr(stn, 'location', None) or 'weewx')
         site_dict.setdefault('model', getattr(stn, 'hardware', None) or 'weewx')
+        site_dict['station'] = grafana_metrics.coerce_config_string(site_dict['station'])
+        site_dict['model'] = grafana_metrics.coerce_config_string(site_dict['model'])
 
         if 'inputs' in config_dict['StdRESTful']['GrafanaCloud']:
             site_dict['inputs'] = _parse_inputs(

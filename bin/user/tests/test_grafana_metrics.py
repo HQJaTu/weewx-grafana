@@ -10,6 +10,8 @@ import os
 import sys
 import unittest
 
+import cramjam
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import grafana_metrics  # noqa: E402
 
@@ -132,6 +134,19 @@ class OtlpPayloadTest(unittest.TestCase):
         self.assertEqual(payload['resourceMetrics'][0]['scopeMetrics'][0]['metrics'], [])
 
 
+class CoerceConfigStringTest(unittest.TestCase):
+
+    def test_list_is_rejoined_with_comma_space(self):
+        # configobj parses an unquoted comma-containing value (e.g.
+        # 'station = Ojala, Lappeenranta') into a list rather than a string.
+        self.assertEqual(
+            grafana_metrics.coerce_config_string(['Ojala', 'Lappeenranta']),
+            'Ojala, Lappeenranta')
+
+    def test_plain_string_passes_through_unchanged(self):
+        self.assertEqual(grafana_metrics.coerce_config_string('Home'), 'Home')
+
+
 class UnitSystemNameTest(unittest.TestCase):
 
     def test_known_constants(self):
@@ -191,6 +206,59 @@ class OpenMetricsWriterTest(unittest.TestCase):
         text = buf.getvalue()
         self.assertEqual(text.count('# TYPE'), 2)
         self.assertEqual(text.count('# EOF'), 1)
+
+
+class WriteRequestBuilderTest(unittest.TestCase):
+
+    def test_one_timeseries_per_name_and_label_set(self):
+        families = {
+            'weewx_outdoor_temperature_celsius': {
+                'samples': [
+                    ({'station': 'Home'}, 1700000000, 21.5),
+                    ({'station': 'Home'}, 1700000010, 22.0),
+                    ({'station': 'Away'}, 1700000000, 18.0),
+                ],
+            },
+        }
+        write_request = grafana_metrics.build_write_request(families)
+        self.assertEqual(len(write_request.timeseries), 2)
+
+    def test_name_label_and_samples_encoded(self):
+        families = {
+            'weewx_outdoor_temperature_celsius': {
+                'samples': [({'station': 'Home'}, 1700000000, 21.5)],
+            },
+        }
+        write_request = grafana_metrics.build_write_request(families)
+        ts = write_request.timeseries[0]
+        labels = {l.name: l.value for l in ts.labels}
+        self.assertEqual(labels, {
+            '__name__': 'weewx_outdoor_temperature_celsius', 'station': 'Home'})
+        self.assertEqual(len(ts.samples), 1)
+        self.assertEqual(ts.samples[0].value, 21.5)
+        self.assertEqual(ts.samples[0].timestamp, 1700000000 * 1000)
+
+    def test_samples_within_a_series_sorted_ascending_by_timestamp(self):
+        families = {
+            'weewx_a': {
+                'samples': [
+                    ({}, 1700000010, 2.0),
+                    ({}, 1700000000, 1.0),
+                ],
+            },
+        }
+        write_request = grafana_metrics.build_write_request(families)
+        timestamps = [s.timestamp for s in write_request.timeseries[0].samples]
+        self.assertEqual(timestamps, sorted(timestamps))
+
+
+class SnappyCompressionTest(unittest.TestCase):
+
+    def test_round_trips_through_cramjam(self):
+        data = b'some sample bytes to compress \x00\x01\x02' * 10
+        compressed = grafana_metrics.compress_snappy(data)
+        self.assertIsInstance(compressed, bytes)
+        self.assertEqual(bytes(cramjam.snappy.decompress_raw(compressed)), data)
 
 
 if __name__ == '__main__':

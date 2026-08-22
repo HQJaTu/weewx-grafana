@@ -1,0 +1,29 @@
+syntax = "proto3";
+package prometheus;
+
+// Minimal subset of the Prometheus Remote Write wire schema
+// (github.com/prometheus/prometheus/prompb/{remote,types}.proto), vendored
+// here so grafana_backfill.py can build WriteRequest payloads without
+// pulling in the full prometheus-client / grpcio-tools dependency chain.
+// This schema has been stable across Prometheus/Mimir remote-write v1 for
+// years. Regenerate remote_write_pb2.py with:
+//   protoc --python_out=. remote_write.proto
+
+message Sample {
+  double value = 1;
+  int64 timestamp = 2; // milliseconds since epoch
+}
+
+message Label {
+  string name = 1;
+  string value = 2;
+}
+
+message TimeSeries {
+  repeated Label labels = 1;
+  repeated Sample samples = 2;
+}
+
+message WriteRequest {
+  repeated TimeSeries timeseries = 1;
+}
