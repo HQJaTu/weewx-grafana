@@ -117,8 +117,18 @@ Once it finishes, `-output`'s directory is exactly the kind of directory
 backfill` at it the same way:
 
 ```
-mimirtool backfill --address=<mimir-url> --id=<tenant-id> ./blocks/*
+mimirtool backfill --address=<mimir-url> --id=<tenant-id> --user=<tenant-id> --key=<api-key> ./blocks/*
 ```
+
+`<mimir-url>` must **not** include the `/api/prom` (or any other) suffix --
+the block-upload API lives at the server root. `--id` alone only sets the
+tenant, it isn't authentication: without `--user`/`--key` (HTTP Basic Auth;
+`--user` is the same tenant/instance ID, `--key` an access-policy token with
+`metrics: write`) the request fails to route at all. See the main
+[README.md](../../README.md)'s "Getting an OpenMetrics file instead" section
+for the full picture, including a Grafana-Cloud-specific gotcha: block
+upload is disabled per-tenant by default and can only be enabled by Grafana
+support -- no access-policy scope or client-side change works around it.
 
 ### Choosing `-block-duration`
 

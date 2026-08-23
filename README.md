@@ -254,7 +254,7 @@ rather than part of the Python extension.
 ```
 cd tools/tsdb-block-writer && go build -o tsdb-block-writer .
 ./tsdb-block-writer -input weewx_backfill.prom -output ./blocks -block-duration 168h
-mimirtool backfill --address=<mimir-url> --id=<tenant-id> ./blocks/*
+mimirtool backfill --address=<mimir-url> --id=<tenant-id> --user=<tenant-id> --key=<api-key> ./blocks/*
 ```
 
 **[`promtool`](https://prometheus.io/docs/prometheus/latest/command-line/promtool/)**
@@ -262,15 +262,39 @@ mimirtool backfill --address=<mimir-url> --id=<tenant-id> ./blocks/*
 
 ```
 promtool tsdb create-blocks-from openmetrics --max-block-duration=24h weewx_backfill.prom ./blocks
-mimirtool backfill --address=<mimir-url> --id=<tenant-id> ./blocks/*
+mimirtool backfill --address=<mimir-url> --id=<tenant-id> --user=<tenant-id> --key=<api-key> ./blocks/*
 ```
 
-Either way, `<mimir-url>` and `<tenant-id>` (your Grafana Cloud instance ID)
-are shown alongside the OTLP endpoint on the same stack details page;
-mimirtool authenticates with `--id` (the tenant) and `instance_id:api_key` as
-HTTP Basic Auth, the same `api_key` configured above. See mimirtool's
-`backfill` documentation for the exact authentication flags for your
-version.
+Either way, `<mimir-url>` (no `/api/prom` suffix -- the block-upload API
+lives at the server root, not under the Prometheus-compatible path) and
+`<tenant-id>` (your Grafana Cloud instance ID) are shown alongside the OTLP
+endpoint on the same stack details page. mimirtool needs **both** `--id`
+(sets the tenant) **and** `--user`/`--key` (HTTP Basic Auth, `--user` the
+same instance ID again, `--key` an access-policy token with `metrics: write`)
+-- `--id` alone is not authentication, and without `--user`/`--key` the
+gateway can't route the request to your tenant at all, surfacing as a
+generic 404 rather than a 401. See mimirtool's `backfill` documentation for
+the exact authentication flags for your version.
+
+**⚠️ Block upload is disabled by default per-tenant on Grafana Cloud, and
+only Grafana can turn it on.** Even with a correct URL and a token scoped
+`metrics: write`, `mimirtool backfill` may fail with:
+
+```
+level=error msg=response status="401 Unauthorized" body="{\"status\":\"error\",\"error\":\"authentication error: invalid scope requested\"}"
+```
+
+This is Mimir's `-compactor.block-upload-enabled` /
+`limits.compactor_block_upload_enabled` setting -- an experimental,
+opt-in, server-side flag on the compactor. It is not exposed through
+Grafana Cloud's access policies, and there is no user-facing setting or API
+to check or change it yourself. If you hit this, open a Grafana Cloud
+support ticket asking them to enable `compactor_block_upload_enabled` for
+your stack (mention the stack name/instance ID). Confirmed directly with
+Grafana support: this is a support-only lever, not something fixable from
+the client side no matter how the request or token is adjusted. Until
+they've enabled it, the direct Remote Write push path above still works for
+any data inside Mimir's out-of-order ingestion window.
 
 #### Links
 * `promtool`: https://prometheus.io/download/
