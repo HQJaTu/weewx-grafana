@@ -17,6 +17,9 @@ jobs:
       - name: Install weewx
         run: pip install weewx
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Run tests
         run: |
           python bin/user/tests/test_grafana_metrics.py
