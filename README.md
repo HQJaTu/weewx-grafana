@@ -1,3 +1,5 @@
+# Weewx-Grafana
+
 This is an extension to [weewx](https://weewx.com) that uploads weather data
 to [Grafana Cloud](https://grafana.com/products/cloud/). The live uploader
 (`bin/user/grafana.py`) does this using the
@@ -11,7 +13,7 @@ weewx database, from before the live uploader was installed. Unlike the
 live uploader, the backfill tool pushes over Prometheus Remote Write --
 see "Backfilling historical data" below.
 
-### How data is named and labeled
+## How data is named and labeled
 
 Every weewx observation is published as its own OTLP metric, named
 `weewx_<observation>_<unit>`, e.g. `outTemp` in degrees Celsius becomes:
@@ -40,13 +42,13 @@ in `OBS_METRIC_NAMES` (e.g. `extraTemp1`, `soilMoist3`) still get a
 predictable name, via a camelCase-to-snake_case fallback, e.g. `extraTemp1`
 becomes `extra_temp_1`.
 
-### Download
+## Download
 
 ```
 wget -O weewx-grafana.zip https://github.com/HQJaTu/weewx-grafana/archive/master.zip
 ```
 
-### How to Install
+## How to Install
 
 1. Run the extension installer:
 
@@ -77,7 +79,7 @@ wget -O weewx-grafana.zip https://github.com/HQJaTu/weewx-grafana/archive/master
     sudo systemctl restart weewx
     ```
 
-### Options
+## Options
 
 _otlp_endpoint_ - Full URL of the Grafana Cloud OTLP metrics endpoint,
 including the `/v1/metrics` path. Required.
@@ -125,7 +127,7 @@ observation, exactly as in [weewx-mqtt](https://github.com/matthewwall/weewx-mqt
                                                      # the published name
 ```
 
-### Connection robustness
+## Connection robustness
 
 Publishing uses weewx's standard RESTful posting framework
 (`weewx.restx.RESTThread`): each record is retried up to `max_tries` times
@@ -139,8 +141,9 @@ HTTP 200 response and a `partialSuccess` object describing rejected data
 points; this extension treats a non-empty `partialSuccess` the same as an
 HTTP error, so it is logged and retried like any other failed post.
 
-### Backfilling historical data
+## Backfilling historical data
 
+### Tooling
 `bin/user/grafana_backfill.py` is a standalone command-line tool that reads
 records already stored in the weewx database and pushes them straight to
 Grafana Cloud over the
@@ -152,6 +155,7 @@ produces one continuous history in Grafana Cloud, with no gap or overlap,
 provided the `--until` cutoff lines up with when the live uploader started
 publishing.
 
+### Option 1: Remote Write to Grafana
 This is the only part of the extension that speaks Remote Write -- the live
 uploader above still uses OTLP, and the "does **not** use the Prometheus
 Remote Write API" statement at the top of this README only applies to that
@@ -200,14 +204,20 @@ live uploader; override them with `--station`/`--model` if needed.
 weewx.conf at all. See `--help` for the full option list, including
 `--binding` and `--unit-system`.
 
-**Direct push has a hard limit: Mimir's out-of-order ingestion window.**
+#### Remote-Write Limitation
+
+**Note!** Direct push has a hard limit: Mimir's out-of-order ingestion window.
+
 Grafana Cloud's Mimir backend rejects any Remote Write sample older than a
 per-tenant window (commonly on the order of hours, not years) with an HTTP
 400 `err-mimir-sample-timestamp-too-old` error -- and this is not a
 transient failure, so the tool detects it and stops immediately with an
 explanatory message instead of retrying (retrying an out-of-order batch
-unchanged can never succeed). In practice this means **direct push is only
+unchanged can never succeed).
+
+In practice this means **direct push is only
 useful for recent gaps** -- a few days to catch the live uploader up, say.
+
 For a real backfill of months or years of history, expect every batch to be
 rejected once it reaches data older than the window, and use the
 OpenMetrics/TSDB-block-upload flow below instead: it uploads TSDB blocks
@@ -218,14 +228,14 @@ if you want direct push to reach further back, ask Grafana support whether
 your stack's out-of-order window can be widened, but for large/old
 backfills the block-upload flow is the recommended approach.
 
-Pass `--dry-run` to skip pushing to Grafana Cloud entirely (combine with
-`--output-file`, below, to only produce a file). A batch that fails with a
-server error (5xx, 429) is retried a few times with a short backoff; a
+A batch that fails with a server error (5xx, 429) is retried a few times with a short backoff; a
 batch Grafana Cloud rejects outright (any other 4xx) is not retried, since
 retrying it unchanged would fail the same way, and the tool exits
 immediately with the error Grafana Cloud returned.
 
-#### Getting an OpenMetrics file instead
+### Option 2: Getting an OpenMetrics file
+
+#### Step 1: Export data into OpenMetrics file
 
 Pass `--output-file <path>` to also (or with `--dry-run`, instead) write the
 data out as an [OpenMetrics](https://github.com/OpenMetrics/OpenMetrics)
@@ -243,6 +253,8 @@ That file then needs turning into TSDB blocks before
 [mimirtool](https://grafana.com/docs/mimir/latest/manage/tools/mimirtool/)
 can upload it. Two tools can do that step:
 
+#### Step 2, Option A: TSDB Blocks - Fast
+
 **`tools/tsdb-block-writer`** (recommended) -- a small Go helper in this repo
 that writes blocks directly via Prometheus's own block-writing library,
 without going through promtool's CLI. On a real multi-year archive this took
@@ -257,6 +269,8 @@ cd tools/tsdb-block-writer && go build -o tsdb-block-writer .
 mimirtool backfill --address=<mimir-url> --id=<tenant-id> --user=<tenant-id> --key=<api-key> ./blocks/*
 ```
 
+#### Step 2, option B: TSDB Blocks - Very slow
+
 **[`promtool`](https://prometheus.io/docs/prometheus/latest/command-line/promtool/)**
 (fallback) -- no Go toolchain needed, just slower:
 
@@ -264,6 +278,8 @@ mimirtool backfill --address=<mimir-url> --id=<tenant-id> --user=<tenant-id> --k
 promtool tsdb create-blocks-from openmetrics --max-block-duration=24h weewx_backfill.prom ./blocks
 mimirtool backfill --address=<mimir-url> --id=<tenant-id> --user=<tenant-id> --key=<api-key> ./blocks/*
 ```
+
+#### Step 3: Upload TSDB Blocks
 
 Either way, `<mimir-url>` (no `/api/prom` suffix -- the block-upload API
 lives at the server root, not under the Prometheus-compatible path) and
@@ -275,6 +291,8 @@ same instance ID again, `--key` an access-policy token with `metrics: write`)
 gateway can't route the request to your tenant at all, surfacing as a
 generic 404 rather than a 401. See mimirtool's `backfill` documentation for
 the exact authentication flags for your version.
+
+#### Grafana Limitations
 
 **⚠️ Block upload is disabled by default per-tenant on Grafana Cloud, and
 only Grafana can turn it on.** Even with a correct URL and a token scoped
@@ -290,19 +308,27 @@ opt-in, server-side flag on the compactor. It is not exposed through
 Grafana Cloud's access policies, and there is no user-facing setting or API
 to check or change it yourself. If you hit this, open a Grafana Cloud
 support ticket asking them to enable `compactor_block_upload_enabled` for
-your stack (mention the stack name/instance ID). Confirmed directly with
-Grafana support: this is a support-only lever, not something fixable from
+your stack (mention the stack name/instance ID).
+
+This has been confirmed directly with Grafana support: this is a support-only lever, not something fixable from
 the client side no matter how the request or token is adjusted. Until
 they've enabled it, the direct Remote Write push path above still works for
 any data inside Mimir's out-of-order ingestion window.
 
-#### Links
+When creating a support ticket, Grafana support will need following information for `compactor_block_upload_enabled`:
+1. Size in GB of the Prometheus blocks on disk and the average number of unique series
+2. Estimated scrape interval for the data
+3. Timeframes the data covers
+4. Timeframes and counts for each block duration
+5. When you intend to start the upload
+
+### Links
 * `promtool`: https://prometheus.io/download/
   * Practically: `dnf install prometheus`
 * `mimirtool`: https://github.com/grafana/mimir/
   * Practically: `dnf install https://github.com/grafana/mimir/releases/download/mimir-3.2.0/mimirtool-3.2.0.x86_64.rpm`
 
-#### Dependencies
+### Dependencies
 
 Because it speaks Remote Write, the backfill tool needs two packages beyond
 what `weectl extension install` pulls in for the live uploader:
@@ -318,6 +344,8 @@ protobuf 3.19.6, matching the `protoc` version that generated
 descriptor/version mismatch, either install 3.19.6 or regenerate
 `remote_write_pb2.py` against your installed version (see the regeneration
 command at the top of `bin/user/remote_write.proto`).
+
+## Developing Weewx-Grafana
 
 ### Running the tests
 
