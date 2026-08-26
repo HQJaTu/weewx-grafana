@@ -1,0 +1,3 @@
+configobj==5.0.9
+cramjam==2.12.0
+protobuf==7.36.0

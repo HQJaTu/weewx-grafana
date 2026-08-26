@@ -1,0 +1,34 @@
+name: Version Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [master]
+
+jobs:
+  version-check:
+    if: "!contains(github.event.pull_request.labels.*.name, 'norelease')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check VERSION was bumped in install.py
+        run: |
+          git fetch --depth=1 origin master
+          BASE_VERSION=$(git show origin/master:install.py | grep -Po '(?<=VERSION = ")[^"]+')
+          HEAD_VERSION=$(grep -Po '(?<=VERSION = ")[^"]+' install.py)
+          echo "master:  $BASE_VERSION"
+          echo "this PR: $HEAD_VERSION"
+
+          if [ "$BASE_VERSION" = "$HEAD_VERSION" ]; then
+            echo "::error file=install.py::VERSION is unchanged ($HEAD_VERSION). Bump it in install.py before merging, or label this PR 'norelease' if it isn't meant to ship a release."
+            exit 1
+          fi
+
+          LOWEST=$(printf '%s\n%s\n' "$BASE_VERSION" "$HEAD_VERSION" | sort -V | head -1)
+          if [ "$LOWEST" != "$BASE_VERSION" ]; then
+            echo "::error file=install.py::VERSION went from $BASE_VERSION to $HEAD_VERSION, which is not an increase. Bump it upward before merging."
+            exit 1
+          fi
+
+          echo "OK: VERSION bumped $BASE_VERSION -> $HEAD_VERSION"
