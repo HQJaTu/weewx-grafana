@@ -16,13 +16,6 @@ metric name, since they identify the *source*, not the *measurement*.
 
 import re
 
-import cramjam
-
-try:
-    from user import remote_write_pb2
-except ImportError:
-    import remote_write_pb2
-
 import weewx.units
 
 VERSION = "0.1.0"
@@ -368,6 +361,11 @@ def build_write_request(families):
     series' samples to arrive in non-decreasing timestamp order, both within
     one WriteRequest and across successive ones for the same series.
     """
+    try:
+        from user import remote_write_pb2
+    except ImportError:
+        import remote_write_pb2
+
     series = {}
     for name, family in families.items():
         for labels, timestamp, value in family['samples']:
@@ -396,4 +394,5 @@ def compress_snappy(data):
     using the latter produces a payload Grafana Cloud rejects with
     'snappy: corrupt input'.
     """
+    import cramjam
     return bytes(cramjam.snappy.compress_raw(data))
